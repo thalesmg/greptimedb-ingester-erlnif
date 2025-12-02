@@ -115,7 +115,7 @@ t_sync_insert(Config) ->
             <<"insert_val">> => 1.0
         }
     ],
-    ?assertMatch({ok, _}, greptimedb_rs:write(Client, Table, Rows)),
+    ?assertMatch({ok, _}, greptimedb_rs:insert_bulk(Client, Table, Rows)),
     ok = greptimedb_rs:stop_client(Client).
 
 t_sync_query(Config) ->
@@ -139,7 +139,7 @@ t_sync_query(Config) ->
             <<"query_val">> => 123
         }
     ],
-    ?assertMatch({ok, _}, greptimedb_rs:write(Client, Table, Rows)),
+    ?assertMatch({ok, _}, greptimedb_rs:insert_bulk(Client, Table, Rows)),
 
     timer:sleep(1000),
     Sql = iolist_to_binary(io_lib:format("SELECT * FROM ~s WHERE ts = ~p", [Table, Ts])),
@@ -166,7 +166,7 @@ t_async_insert(Config) ->
     CallbackFun = fun(P, R, Res) -> P ! {R, Res} end,
     Callback = {CallbackFun, [Self, Ref]},
 
-    ok = greptimedb_rs:async_write(Client, Table, Rows, Callback),
+    ok = greptimedb_rs:insert_bulk_async(Client, Table, Rows, Callback),
     receive
         {Ref, {ok, _}} -> ok;
         {Ref, {error, Reason}} -> ct:fail({async_write_failed, Reason})
@@ -192,7 +192,7 @@ t_async_query(Config) ->
             <<"async_query">> => 200
         }
     ],
-    {ok, _} = greptimedb_rs:write(Client, Table, Rows),
+    {ok, _} = greptimedb_rs:insert_bulk(Client, Table, Rows),
     timer:sleep(1000),
 
     Self = self(),
@@ -201,7 +201,7 @@ t_async_query(Config) ->
     Callback = {CallbackFun, [Self, Ref]},
 
     Sql = iolist_to_binary(io_lib:format("SELECT * FROM ~s WHERE ts = ~p", [Table, Ts])),
-    ok = greptimedb_rs:async_query(Client, Sql, Callback),
+    ok = greptimedb_rs:query_async(Client, Sql, Callback),
 
     receive
         {Ref, {ok, Result}} ->

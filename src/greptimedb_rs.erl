@@ -2,13 +2,19 @@
 
 -include("greptimedb_rs.hrl").
 
+%% Connection APIs
 -export([
     start_client/1,
-    stop_client/1,
-    write/3,
+    stop_client/1
+]).
+
+%% Query APIs
+-export([
     query/2,
-    async_write/4,
-    async_query/3
+    query_async/3,
+
+    insert_bulk/3,
+    insert_bulk_async/4
 ]).
 
 -spec start_client(opts()) -> {ok, client()} | {error, reason()}.
@@ -26,21 +32,21 @@ start_client(Opts) ->
 stop_client(Client) ->
     greptimedb_rs_sock:stop(Client).
 
--spec write(client(), binary(), [map()]) -> {ok, integer()} | {error, reason()}.
-write(Client, Table, Rows) ->
-    greptimedb_rs_sock:sync_command(Client, insert, [Table, Rows]).
-
 -spec query(client(), sql()) -> {ok, result()} | {error, reason()}.
 query(Client, Sql) ->
     greptimedb_rs_sock:sync_command(Client, execute, [Sql]).
 
--spec async_write(client(), binary(), [map()], callback()) -> ok.
-async_write(Client, Table, Rows, ResultCallback) ->
-    async(Client, insert, [Table, Rows], ResultCallback).
-
--spec async_query(client(), sql(), callback()) -> ok.
-async_query(Client, Sql, ResultCallback) ->
+-spec query_async(client(), sql(), callback()) -> ok.
+query_async(Client, Sql, ResultCallback) ->
     async(Client, execute, [Sql], ResultCallback).
+
+-spec insert_bulk(client(), binary(), [map()]) -> {ok, integer()} | {error, reason()}.
+insert_bulk(Client, Table, Rows) ->
+    greptimedb_rs_sock:sync_command(Client, insert, [Table, Rows]).
+
+-spec insert_bulk_async(client(), binary(), [map()], callback()) -> ok.
+insert_bulk_async(Client, Table, Rows, ResultCallback) ->
+    async(Client, insert, [Table, Rows], ResultCallback).
 
 async(Client, Cmd, Args, ResultCallback) ->
     _ = erlang:send(Client, ?ASYNC_REQ(Cmd, Args, ResultCallback)),
