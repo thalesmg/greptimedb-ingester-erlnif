@@ -69,12 +69,16 @@ end_per_group(_GroupName, _Config) ->
     ok.
 
 init_per_testcase(TestCase, Config) ->
+    UniqueSuffix = integer_to_binary(erlang:unique_integer([positive])),
     Database = <<(atom_to_binary(TestCase))/binary, "_db">>,
-    Table = <<(atom_to_binary(TestCase))/binary, "_table">>,
+    Table = <<(atom_to_binary(TestCase))/binary, "_table_", UniqueSuffix/binary>>,
     [{database, Database}, {table, Table} | Config].
 
 end_per_testcase(_TestCase, _Config) ->
     ok.
+
+%% ----------------------------------------
+%% Test Cases
 
 t_connect(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
@@ -99,10 +103,22 @@ t_sync_insert(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Create table explicitly
+    % Drop table if exists
+    DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+    greptimedb_rs:query(Client, DropTableSql),
+
+    % Create table explicitly with full schema
     CreateTableSql = iolist_to_binary(
         io_lib:format(
-            "CREATE TABLE IF NOT EXISTS ~s (ts TIMESTAMP TIME INDEX, insert_val DOUBLE) ENGINE=mito",
+            "CREATE TABLE IF NOT EXISTS ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "temperature DOUBLE, "
+            "pressure INT64, "
+            "active BOOLEAN, "
+            "sensor_location STRING, "
+            "sensor_id INT64, "
+            "PRIMARY KEY (sensor_location, sensor_id)"
+            ") ENGINE=mito",
             [Table]
         )
     ),
@@ -110,10 +126,16 @@ t_sync_insert(Config) ->
 
     Ts = erlang:system_time(millisecond),
     Rows = [
-        #{
-            <<"ts">> => Ts,
-            <<"insert_val">> => 1.0
-        }
+    #{<<"fields">> => #{
+        <<"temperature">> => 25.5,
+        <<"pressure">> => 1013,
+        <<"active">> => true
+      },
+      <<"tags">> => #{
+        <<"sensor_location">> => <<"room1">>,
+        <<"sensor_id">> => 12345
+      },
+      <<"timestamp">> => Ts}
     ],
     ?assertMatch({ok, _}, greptimedb_rs:insert_bulk(Client, Table, Rows)),
     ok = greptimedb_rs:stop_client(Client).
@@ -125,19 +147,32 @@ t_sync_query(Config) ->
     % Create table explicitly
     CreateTableSql = iolist_to_binary(
         io_lib:format(
-            "CREATE TABLE IF NOT EXISTS ~s (ts TIMESTAMP TIME INDEX, query_val INT64) ENGINE=mito",
+            "CREATE TABLE IF NOT EXISTS ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "temperature DOUBLE, "
+            "pressure INT64, "
+            "active BOOLEAN, "
+            "sensor_location STRING, "
+            "sensor_id INT64, "
+            "PRIMARY KEY (sensor_location, sensor_id)"
+            ") ENGINE=mito",
             [Table]
         )
     ),
     ?assertMatch({ok, _}, greptimedb_rs:query(Client, CreateTableSql)),
 
     Ts = erlang:system_time(millisecond),
-    % Insert first to query
     Rows = [
-        #{
-            <<"ts">> => Ts,
-            <<"query_val">> => 123
-        }
+    #{<<"fields">> => #{
+        <<"temperature">> => 25.5,
+        <<"pressure">> => 1013,
+        <<"active">> => true
+      },
+      <<"tags">> => #{
+        <<"sensor_location">> => <<"room1">>,
+        <<"sensor_id">> => 12345
+      },
+      <<"timestamp">> => Ts}
     ],
     ?assertMatch({ok, _}, greptimedb_rs:insert_bulk(Client, Table, Rows)),
 
@@ -151,15 +186,34 @@ t_async_insert(Config) ->
     Table = ?table(Config),
 
     % Create table explicitly
-    CreateTableSql = iolist_to_binary(io_lib:format("CREATE TABLE IF NOT EXISTS ~s (ts TIMESTAMP TIME INDEX, async_insert INT64) ENGINE=mito", [Table])),
+    CreateTableSql = iolist_to_binary(
+        io_lib:format(
+            "CREATE TABLE IF NOT EXISTS ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "temperature DOUBLE, "
+            "pressure INT64, "
+            "active BOOLEAN, "
+            "sensor_location STRING, "
+            "sensor_id INT64, "
+            "PRIMARY KEY (sensor_location, sensor_id)"
+            ") ENGINE=mito",
+            [Table]
+        )
+    ),
     ?assertMatch({ok, _}, greptimedb_rs:query(Client, CreateTableSql)),
 
     Ts = erlang:system_time(millisecond),
     Rows = [
-        #{
-            <<"ts">> => Ts,
-            <<"async_insert">> => 100
-        }
+    #{<<"fields">> => #{
+        <<"temperature">> => 25.5,
+        <<"pressure">> => 1013,
+        <<"active">> => true
+      },
+      <<"tags">> => #{
+        <<"sensor_location">> => <<"room1">>,
+        <<"sensor_id">> => 12345
+      },
+      <<"timestamp">> => Ts}
     ],
     Self = self(),
     Ref = make_ref(),
@@ -180,17 +234,35 @@ t_async_query(Config) ->
     Table = ?table(Config),
 
     % Create table explicitly
-    CreateTableSql = iolist_to_binary(io_lib:format("CREATE TABLE IF NOT EXISTS ~s (ts TIMESTAMP TIME INDEX, async_query INT64) ENGINE=mito", [Table])),
+    CreateTableSql = iolist_to_binary(
+        io_lib:format(
+            "CREATE TABLE IF NOT EXISTS ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "temperature DOUBLE, "
+            "pressure INT64, "
+            "active BOOLEAN, "
+            "sensor_location STRING, "
+            "sensor_id INT64, "
+            "PRIMARY KEY (sensor_location, sensor_id)"
+            ") ENGINE=mito",
+            [Table]
+        )
+    ),
     ?assertMatch({ok, _}, greptimedb_rs:query(Client, CreateTableSql)),
 
     Ts = erlang:system_time(millisecond),
 
-    % Sync write to setup
     Rows = [
-        #{
-            <<"ts">> => Ts,
-            <<"async_query">> => 200
-        }
+    #{<<"fields">> => #{
+        <<"temperature">> => 25.5,
+        <<"pressure">> => 1013,
+        <<"active">> => true
+      },
+      <<"tags">> => #{
+        <<"sensor_location">> => <<"room1">>,
+        <<"sensor_id">> => 12345
+      },
+      <<"timestamp">> => Ts}
     ],
     {ok, _} = greptimedb_rs:insert_bulk(Client, Table, Rows),
     timer:sleep(1000),
