@@ -52,10 +52,10 @@ end_per_testcase(_TestCase, _Config) ->
     ok.
 
 t_connect_tcp(Config) ->
-    {ok, Client} = greptimedb:start_client(?conn_opts(Config)),
+    {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     ?assert(is_pid(Client)),
-    ?assertMatch({ok, [_ | _]}, greptimedb:query(Client, <<"SELECT 1">>)),
-    ok = greptimedb:stop_client(Client).
+    ?assertMatch({ok, [_ | _]}, greptimedb_rs:query(Client, <<"SELECT 1">>)),
+    ok = greptimedb_rs:stop_client(Client).
 
 t_connect_with_auth(_Config) ->
     Host = get_host_addr("GREPTIMEDB_AUTH_ADDR"),
@@ -65,10 +65,10 @@ t_connect_with_auth(_Config) ->
         username => <<"greptime_user">>,
         password => <<"greptime_pwd">>
     },
-    {ok, Client} = greptimedb:start_client(ConnOpts),
+    {ok, Client} = greptimedb_rs:start_client(ConnOpts),
     ?assert(is_pid(Client)),
-    ?assertMatch({ok, [_ | _]}, greptimedb:query(Client, <<"SELECT 1">>)),
-    ok = greptimedb:stop_client(Client).
+    ?assertMatch({ok, [_ | _]}, greptimedb_rs:query(Client, <<"SELECT 1">>)),
+    ok = greptimedb_rs:stop_client(Client).
 
 t_connect_tls(_Config) ->
     Host = get_host_addr("GREPTIMEDB_TLS_ADDR"),
@@ -92,13 +92,13 @@ t_connect_tls(_Config) ->
         client_key => list_to_binary(ClientKey)
     },
 
-    {ok, Client} = greptimedb:start_client(ConnOpts),
+    {ok, Client} = greptimedb_rs:start_client(ConnOpts),
     ?assert(is_pid(Client)),
-    ?assertMatch({ok, [_ | _]}, greptimedb:query(Client, <<"SELECT 1">>)),
-    ok = greptimedb:stop_client(Client).
+    ?assertMatch({ok, [_ | _]}, greptimedb_rs:query(Client, <<"SELECT 1">>)),
+    ok = greptimedb_rs:stop_client(Client).
 
 t_insert_test(Config) ->
-    {ok, Client} = greptimedb:start_client(?conn_opts(Config)),
+    {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
 
     Table = ?table(Config),
     Ts = erlang:system_time(millisecond),
@@ -109,19 +109,19 @@ t_insert_test(Config) ->
         }
     ],
 
-    ?assertMatch({ok, _}, greptimedb:write(Client, Table, Rows)),
+    ?assertMatch({ok, _}, greptimedb_rs:write(Client, Table, Rows)),
 
     % Verify with query
 
     % Wait for eventual consistency if needed
     timer:sleep(1000),
     Sql = iolist_to_binary(io_lib:format("SELECT * FROM ~s WHERE ts = ~p", [Table, Ts])),
-    ?assertMatch({ok, [_ | _]}, greptimedb:query(Client, Sql)),
+    ?assertMatch({ok, [_ | _]}, greptimedb_rs:query(Client, Sql)),
 
-    ok = greptimedb:stop_client(Client).
+    ok = greptimedb_rs:stop_client(Client).
 
 t_async_insert_query_test(Config) ->
-    {ok, Client} = greptimedb:start_client(?conn_opts(Config)),
+    {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
     Ts = erlang:system_time(millisecond),
     Rows = [
@@ -134,7 +134,7 @@ t_async_insert_query_test(Config) ->
     Self = self(),
     Callback = {fun erlang:send/2, [Self]},
 
-    ok = greptimedb:async_write(Client, Table, Rows, Callback),
+    ok = greptimedb_rs:async_write(Client, Table, Rows, Callback),
 
     receive
         {ok, _} -> ok;
@@ -146,7 +146,7 @@ t_async_insert_query_test(Config) ->
     timer:sleep(1000),
 
     Sql = iolist_to_binary(io_lib:format("SELECT * FROM ~s WHERE ts = ~p", [Table, Ts])),
-    ok = greptimedb:async_query(Client, Sql, Callback),
+    ok = greptimedb_rs:async_query(Client, Sql, Callback),
 
     receive
         {ok, Result} ->
@@ -157,7 +157,7 @@ t_async_insert_query_test(Config) ->
         ct:fail(async_query_timeout)
     end,
 
-    ok = greptimedb:stop_client(Client).
+    ok = greptimedb_rs:stop_client(Client).
 
 %% ================================================================================
 %% Helpers

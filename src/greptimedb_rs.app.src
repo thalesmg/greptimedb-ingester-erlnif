@@ -1,6 +1,6 @@
 %% -*- mode: erlang -*-
 
-{application, greptimedb, [
+{application, greptimedb_rs, [
     {description, "GreptimeDB Erlang Client lib with RustNif"},
     {vsn, "0.1.0"},
     {registered, []},

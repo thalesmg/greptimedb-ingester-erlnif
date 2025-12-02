@@ -18,6 +18,6 @@
 -type args() :: term().
 -type callback() :: {function(), list()}.
 
--define(NIF_MODULE, greptimedb_nif).
+-define(NIF_MODULE, greptimedb_rs_nif).
 -define(REQ(Func, Args), {sync, Func, Args}).
 -define(ASYNC_REQ(Func, Args, Callback), {async, Func, Args, Callback}).

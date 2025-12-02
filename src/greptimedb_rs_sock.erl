@@ -1,6 +1,6 @@
--module(greptimedb_sock).
+-module(greptimedb_rs_sock).
 
--include("greptimedb.hrl").
+-include("greptimedb_rs.hrl").
 
 -behavior(gen_server).
 

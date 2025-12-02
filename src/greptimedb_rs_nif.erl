@@ -1,4 +1,4 @@
--module(greptimedb_nif).
+-module(greptimedb_rs_nif).
 
 -export([
     connect/1,

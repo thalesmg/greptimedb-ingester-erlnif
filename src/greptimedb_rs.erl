@@ -1,6 +1,6 @@
--module(greptimedb).
+-module(greptimedb_rs).
 
--include("greptimedb.hrl").
+-include("greptimedb_rs.hrl").
 
 -export([
     start_client/1,
@@ -13,8 +13,8 @@
 
 -spec start_client(opts()) -> {ok, client()} | {error, reason()}.
 start_client(Opts) ->
-    {ok, Pid} = greptimedb_sock:start(),
-    case greptimedb_sock:sync_command(Pid, connect, [Opts]) of
+    {ok, Pid} = greptimedb_rs_sock:start(),
+    case greptimedb_rs_sock:sync_command(Pid, connect, [Opts]) of
         {ok, _Ref} ->
             {ok, Pid};
         {error, _} = Err ->
@@ -24,15 +24,15 @@ start_client(Opts) ->
 
 -spec stop_client(client()) -> ok.
 stop_client(Client) ->
-    greptimedb_sock:stop(Client).
+    greptimedb_rs_sock:stop(Client).
 
 -spec write(client(), binary(), [map()]) -> {ok, integer()} | {error, reason()}.
 write(Client, Table, Rows) ->
-    greptimedb_sock:sync_command(Client, insert, [Table, Rows]).
+    greptimedb_rs_sock:sync_command(Client, insert, [Table, Rows]).
 
 -spec query(client(), sql()) -> {ok, result()} | {error, reason()}.
 query(Client, Sql) ->
-    greptimedb_sock:sync_command(Client, execute, [Sql]).
+    greptimedb_rs_sock:sync_command(Client, execute, [Sql]).
 
 -spec async_write(client(), binary(), [map()], callback()) -> ok.
 async_write(Client, Table, Rows, ResultCallback) ->
