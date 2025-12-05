@@ -9,6 +9,7 @@ High-performance Erlang client for [GreptimeDB](https://greptime.com/), built on
 - **Stream Ingestion**: efficient streaming support for high-throughput data ingestion.
 - **Connection Pooling**: Robust connection management handled by the underlying Rust implementation.
 - **SQL Execution**: Execute DDL and SQL queries directly.
+- **Full Type Support**: Supports all GreptimeDB data types including Int8-64, Float32/64, Boolean, String, Binary, Date, Datetime, and Timestamps with various precisions.
 
 ## Installation
 
@@ -16,7 +17,7 @@ Add `greptimedb_rs` to your `rebar.config` dependencies:
 
 ```erlang
 {deps, [
-    {greptimedb_rs, {git, "https://github.com/GreptimeTeam/greptimedb-ingester-erlnif", {branch, "main"}}}
+    {greptimedb_rs, {git, "https://github.com/emqx/greptimedb-ingester-erlnif", {branch, "main"}}}
 ]}.
 ```
 
@@ -34,6 +35,8 @@ application:ensure_all_started(greptimedb_rs).
 
 Initialize the client with your GreptimeDB endpoint configuration.
 
+**Basic Connection:**
+
 ```erlang
 Opts = #{
     endpoints => [<<"127.0.0.1:4001">>], % List of gRPC endpoints
@@ -44,9 +47,36 @@ Opts = #{
 {ok, Client} = greptimedb_rs:start_client(Opts).
 ```
 
+**Connection with Authentication:**
+
+```erlang
+Opts = #{
+    endpoints => [<<"127.0.0.1:4001">>],
+    dbname => <<"public">>,
+    username => <<"greptime_user">>,
+    password => <<"greptime_pwd">>
+},
+{ok, Client} = greptimedb_rs:start_client(Opts).
+```
+
+**Connection with TLS:**
+
+```erlang
+Opts = #{
+    endpoints => [<<"127.0.0.1:4001">>],
+    dbname => <<"public">>,
+    tls => true,
+    % Optional: Paths to certificates
+    ca_cert => <<"/path/to/ca.crt">>,
+    client_cert => <<"/path/to/client.crt">>,
+    client_key => <<"/path/to/client.key">>
+},
+{ok, Client} = greptimedb_rs:start_client(Opts).
+```
+
 ### 3. Prepare Data
 
-Rows must be structured as maps containing `timestamp`, `tags`, and `fields`.
+Rows are represented as maps containing `timestamp`, `tags` (optional), and `fields`. Keys can be atoms or binaries.
 
 ```erlang
 Row = #{
@@ -57,7 +87,8 @@ Row = #{
     },
     fields => #{
         <<"cpu_usage">> => 85.5,
-        <<"memory_usage">> => 1024
+        <<"memory_usage">> => 1024,
+        <<"is_active">> => true
     }
 }.
 ```
@@ -70,7 +101,7 @@ Blocks the calling process until the insert is confirmed.
 ```erlang
 Table = <<"system_metrics">>,
 Rows = [Row], % Insert a list of rows
-{ok, _} = greptimedb_rs:insert(Client, Table, Rows).
+{ok, AffectedRows} = greptimedb_rs:insert(Client, Table, Rows).
 ```
 
 #### Asynchronous Insert
@@ -78,7 +109,10 @@ Returns immediately. The provided callback is executed upon completion.
 
 ```erlang
 % Define a callback function
-Callback = {fun(Result) -> io:format("Insert finished: ~p~n", [Result]) end, []},
+% Callback signature: fun(CallbackArgs, Result)
+Callback = {fun(Ref, Result) ->
+    io:format("Insert finished for ~p: ~p~n", [Ref, Result])
+end, [make_ref()]},
 
 ok = greptimedb_rs:insert_async(Client, Table, Rows, Callback).
 ```
@@ -88,7 +122,7 @@ ok = greptimedb_rs:insert_async(Client, Table, Rows, Callback).
 Streaming is recommended for high-volume data ingestion. It establishes a persistent stream to the server.
 
 ### 1. Start a Stream
-Initialize a stream. You must provide a sample row (e.g., the first row) to define the schema.
+Initialize a stream. The schema is automatically inferred from the `FirstRow` provided (or fetched from the server if the table exists).
 
 ```erlang
 {ok, Stream} = greptimedb_rs:stream_start(Client, Table, Row).
@@ -113,7 +147,9 @@ greptimedb_rs:stream_close(Stream).
 
 ## Executing SQL
 
-You can execute SQL statements (like `CREATE TABLE` or `DROP TABLE`) using the `query/2` function.
+You can execute SQL statements (like `CREATE TABLE`, `DROP TABLE`, or `SELECT`) using the `query/2` function.
+
+**DDL (Data Definition Language):**
 
 ```erlang
 Sql = <<"CREATE TABLE IF NOT EXISTS system_metrics (
@@ -125,6 +161,29 @@ Sql = <<"CREATE TABLE IF NOT EXISTS system_metrics (
 
 {ok, _} = greptimedb_rs:query(Client, Sql).
 ```
+
+**DQL (Data Query Language):**
+
+```erlang
+Query = <<"SELECT * FROM system_metrics LIMIT 10">>,
+{ok, Result} = greptimedb_rs:query(Client, Query).
+```
+
+## Supported Data Types
+
+The library supports automatic mapping from Erlang terms to GreptimeDB types based on the table schema.
+
+| GreptimeDB Type  | Erlang Type                                 | Example                   |
+|:-----------------|:--------------------------------------------|:--------------------------|
+| `String`         | Binary / String                             | `<<"hello">>` / `"hello"` |
+| `Boolean`        | Boolean                                     | `true`, `false`           |
+| `Int8/16/32/64`  | Integer                                     | `123`, `-456`             |
+| `UInt8/16/32/64` | Integer                                     | `123`                     |
+| `Float32/64`     | Float                                       | `123.45`                  |
+| `Binary`         | Binary                                      | `<<1, 2, 3>>`             |
+| `Date`           | Integer (Days since epoch)                  | `19700`                   |
+| `Datetime`       | Integer (Milliseconds since epoch)          | `1678888888000`           |
+| `Timestamp`      | Integer (Units depend on column definition) | `1678888888000`           |
 
 ## Cleanup
 
