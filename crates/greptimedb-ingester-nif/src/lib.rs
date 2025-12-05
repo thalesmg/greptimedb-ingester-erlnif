@@ -3,7 +3,7 @@ use greptime_proto::v1::Basic;
 use greptimedb_ingester::client::Client;
 use greptimedb_ingester::database::Database;
 use greptimedb_ingester::{
-    BulkInserter, BulkStreamWriter, BulkWriteOptions, CompressionType, TableSchema,
+    BulkInserter, BulkStreamWriter, BulkWriteOptions, ColumnDataType, CompressionType, TableSchema,
 };
 use lazy_static::lazy_static;
 use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
@@ -11,6 +11,7 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 
 pub mod atoms;
+mod types;
 mod util;
 
 lazy_static! {
@@ -23,8 +24,13 @@ pub struct GreptimeResource {
     pub auth: Option<AuthScheme>,
 }
 
+// Wrapper to force Send/Sync on BulkStreamWriter
+pub struct SendableBulkStreamWriter(pub BulkStreamWriter);
+unsafe impl Send for SendableBulkStreamWriter {}
+unsafe impl Sync for SendableBulkStreamWriter {}
+
 pub struct StreamWriterResource {
-    pub writer: tokio::sync::Mutex<Option<BulkStreamWriter>>,
+    pub writer: tokio::sync::Mutex<Option<SendableBulkStreamWriter>>,
     pub schema: TableSchema,
 }
 
@@ -125,6 +131,80 @@ fn execute(env: Env, resource: ResourceArc<GreptimeResource>, sql: String) -> Ni
     }
 }
 
+async fn fetch_table_schema(db: &Database, table_name: &str) -> Result<TableSchema, String> {
+    let sql = format!("DESCRIBE {table_name}");
+    let mut stream = db.query(&sql).await.map_err(|e| e.to_string())?;
+
+    let mut table_schema = TableSchema::builder()
+        .name(table_name)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    while let Some(batch_res) = futures::StreamExt::next(&mut stream).await {
+        let batch = batch_res.map_err(|e| e.to_string())?;
+
+        // Ensure columns exist
+        // 0: Field, 1: Type, 2: Null, 3: Key, 4: Default, 5: Semantic Type
+        if batch.num_columns() < 6 {
+            return Err("DESCRIBE result has unexpected number of columns".to_string());
+        }
+
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .ok_or("Failed to cast column 0 to StringArray")?;
+        let types = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .ok_or("Failed to cast column 1 to StringArray")?;
+        let semantic_types = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .ok_or("Failed to cast column 5 to StringArray")?;
+
+        for i in 0..batch.num_rows() {
+            let name = names.value(i);
+            let type_str = types.value(i);
+            let semantic_str = semantic_types.value(i);
+
+            let dtype = match type_str {
+                "Int8" => ColumnDataType::Int8,
+                "Int16" => ColumnDataType::Int16,
+                "Int32" => ColumnDataType::Int32,
+                "Int64" => ColumnDataType::Int64,
+                "UInt8" => ColumnDataType::Uint8,
+                "UInt16" => ColumnDataType::Uint16,
+                "UInt32" => ColumnDataType::Uint32,
+                "UInt64" => ColumnDataType::Uint64,
+                "Float32" => ColumnDataType::Float32,
+                "Float64" => ColumnDataType::Float64,
+                "String" => ColumnDataType::String,
+                "Boolean" => ColumnDataType::Boolean,
+                "Binary" => ColumnDataType::Binary,
+                "Date" => ColumnDataType::Date,
+                "Datetime" => ColumnDataType::Datetime,
+                "TimestampSecond" => ColumnDataType::TimestampSecond,
+                "TimestampMillisecond" => ColumnDataType::TimestampMillisecond,
+                "TimestampMicrosecond" => ColumnDataType::TimestampMicrosecond,
+                "TimestampNanosecond" => ColumnDataType::TimestampNanosecond,
+                _ => return Err(format!("Unknown column type: {type_str}")),
+            };
+
+            match semantic_str {
+                "TAG" => table_schema = table_schema.add_tag(name, dtype),
+                "FIELD" => table_schema = table_schema.add_field(name, dtype),
+                "TIMESTAMP" => table_schema = table_schema.add_timestamp(name, dtype),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(table_schema)
+}
+
 #[rustler::nif(schedule = "DirtyIo")]
 fn insert<'a>(
     env: Env<'a>,
@@ -136,10 +216,13 @@ fn insert<'a>(
         return Ok((atoms::ok(), 0).encode(env));
     }
 
-    // 1. Infer Schema from the first row
-    let first_row_term = rows_term[0];
-
-    let table_template = util::terms_to_table_schema(&table, first_row_term)?;
+    // 1. Fetch Schema from Server
+    let table_template_res: Result<TableSchema, String> =
+        RUNTIME.block_on(fetch_table_schema(&resource.db, &table));
+    let table_template = match table_template_res {
+        Ok(s) => s,
+        Err(e) => return Ok((atoms::error(), e).encode(env)),
+    };
 
     // 2. Construct Rows
     let greptime_rows = util::terms_to_rows(&table_template, rows_term)?;
@@ -182,10 +265,16 @@ fn stream_start<'a>(
     env: Env<'a>,
     resource: ResourceArc<GreptimeResource>,
     table: String,
-    first_row: Term<'a>,
+    _first_row: Term<'a>,
 ) -> NifResult<Term<'a>> {
-    // Infer schema
-    let table_template = util::terms_to_table_schema(&table, first_row)?;
+    // 1. Fetch Schema from Server
+    let table_template_res: Result<TableSchema, String> =
+        RUNTIME.block_on(fetch_table_schema(&resource.db, &table));
+    let table_template = match table_template_res {
+        Ok(s) => s,
+        Err(e) => return Ok((atoms::error(), e).encode(env)),
+    };
+
     let schema_clone = table_template.clone();
 
     let result: Result<ResourceArc<StreamWriterResource>, String> = RUNTIME.block_on(async {
@@ -207,7 +296,7 @@ fn stream_start<'a>(
             .map_err(|e| e.to_string())?;
 
         Ok(ResourceArc::new(StreamWriterResource {
-            writer: tokio::sync::Mutex::new(Some(writer)),
+            writer: tokio::sync::Mutex::new(Some(SendableBulkStreamWriter(writer))),
             schema: schema_clone,
         }))
     });
@@ -228,7 +317,8 @@ fn stream_write<'a>(
 
     let result: Result<(), String> = RUNTIME.block_on(async {
         let mut writer_guard = resource.writer.lock().await;
-        if let Some(writer) = writer_guard.as_mut() {
+        if let Some(writer_wrapper) = writer_guard.as_mut() {
+            let writer = &mut writer_wrapper.0;
             let _request_id = writer
                 .write_rows_async(greptime_rows)
                 .await
@@ -249,7 +339,8 @@ fn stream_write<'a>(
 fn stream_close(env: Env, resource: ResourceArc<StreamWriterResource>) -> NifResult<Term> {
     let result: Result<(), String> = RUNTIME.block_on(async {
         let mut writer_guard = resource.writer.lock().await;
-        if let Some(writer) = writer_guard.take() {
+        if let Some(writer_wrapper) = writer_guard.take() {
+            let writer = writer_wrapper.0;
             writer.finish().await.map_err(|e| e.to_string())?;
             Ok(())
         } else {

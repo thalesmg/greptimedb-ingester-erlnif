@@ -17,3 +17,4 @@ greptimedb-ingester = { git = "https://github.com/JimMoen/greptimedb-ingester-ru
 log = "0.4"
 futures = "0.3"
 greptime-proto = { git = "https://github.com/GreptimeTeam/greptime-proto.git", rev = "454c52634c3bac27de10bf0d85d5533eed1cf03f" }
+arrow = { version = "54.2", features = ["prettyprint"] }
