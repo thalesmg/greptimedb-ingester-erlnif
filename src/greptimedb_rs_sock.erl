@@ -72,7 +72,7 @@ handle_call(
     State = #state{client = undefined}
 ) ->
     Opts = unwrap_password(Opts0),
-    case apply_nif(?cmd_connect, Args) of
+    case apply_nif(?cmd_connect, [Opts]) of
         {ok, ClientRef} = Ok when is_reference(ClientRef) ->
             {reply, Ok, State#state{client = ClientRef, opts = Opts0}};
         ?is_err = Err ->
