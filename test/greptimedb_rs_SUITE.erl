@@ -364,7 +364,7 @@ t_stream_write_async(Config) ->
     CallbackFun = fun(P, R, Res) -> P ! {R, Res} end,
     Callback = {CallbackFun, [Self, Ref]},
 
-    ok = greptimedb_rs:stream_write_async(StreamClient, Rows, Callback),
+    {ok, _} = greptimedb_rs:stream_write_async(StreamClient, Rows, Callback),
 
     receive
         {Ref, ok} -> ok;

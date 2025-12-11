@@ -127,7 +127,7 @@ t_stream_async_all_types(Config) ->
     Ref = make_ref(),
     Callback = {fun(P, R, Res) -> P ! {R, Res} end, [Self, Ref]},
 
-    ok = greptimedb_rs:stream_write_async(Stream, Rows, Callback),
+    {ok, _} = greptimedb_rs:stream_write_async(Stream, Rows, Callback),
 
     receive
         {Ref, ok} -> ok;
