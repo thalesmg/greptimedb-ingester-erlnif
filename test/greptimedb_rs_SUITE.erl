@@ -22,9 +22,11 @@ groups() ->
         t_metadata_queries,
         t_insert_sync,
         t_insert_sync_existing_table,
+        t_insert_sync_schema_conflict,
         t_query_sync,
         t_insert_async,
         t_insert_async_existing_table,
+        t_insert_async_schema_conflict,
         t_query_async,
         t_stream_write,
         t_stream_write_async
@@ -148,12 +150,10 @@ t_metadata_queries(Config) ->
     Ts = erlang:system_time(millisecond),
     Rows = [
         #{
-            fields => #{<<"foo">> => <<"bar">>},
             tags => #{<<"val">> => 10},
             timestamp => Ts
         },
         #{
-            fields => #{<<"baz">> => <<"qux">>},
             tags => #{<<"val">> => 20},
             timestamp => Ts + 1000
         }
@@ -186,12 +186,12 @@ t_insert_sync(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
     Ts = erlang:system_time(millisecond),
-    % Use ATOMS for keys here
+    %% Use ATOMS for keys here
     Rows = [
         #{
             fields => #{
@@ -220,12 +220,12 @@ t_insert_sync_existing_table(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
-    % Create table explicitly with schema that differs from default inference
-    % e.g. use INT32 for pressure (default inference might prefer INT64)
+    %% Create table explicitly with schema that differs from default inference
+    %% e.g. use INT32 for pressure (default inference might prefer INT64)
     CreateTableSql = iolist_to_binary(
         io_lib:format(
             "CREATE TABLE ~s ("
@@ -248,7 +248,7 @@ t_insert_sync_existing_table(Config) ->
         #{
             fields => #{
                 <<"temperature">> => 25.5,
-                % Fits in INT32
+                %% Fits in INT32
                 <<"pressure">> => 1013,
                 <<"active">> => true,
                 <<"insert_val">> => 1.0
@@ -260,7 +260,7 @@ t_insert_sync_existing_table(Config) ->
             timestamp => Ts
         }
     ],
-    % Should succeed by using the existing schema
+    %% Should succeed by using the existing schema
     ?assertMatch({ok, _}, greptimedb_rs:insert(Client, Table, Rows)),
 
     timer:sleep(1000),
@@ -270,11 +270,77 @@ t_insert_sync_existing_table(Config) ->
 
     ok = greptimedb_rs:stop_client(Client).
 
+t_insert_sync_schema_conflict(Config) ->
+    {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
+    Table = ?table(Config),
+
+    %% Drop table if exists
+    DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+    greptimedb_rs:query(Client, DropTableSql),
+
+    %% Create table with INT8 Field and INT32 PK
+    CreateTableSql = iolist_to_binary(
+        io_lib:format(
+            "CREATE TABLE ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "val_int8 INT8, "
+            "val_pk INT32, "
+            "PRIMARY KEY (val_pk)"
+            ") ENGINE=mito",
+            [Table]
+        )
+    ),
+    ?assertMatch({ok, _}, greptimedb_rs:query(Client, CreateTableSql)),
+
+    Ts = erlang:system_time(millisecond),
+
+    %% Case 1: Overflow INT8 (1000 doesn't fit in i8) -> Should Error
+    Rows1 = [
+        #{
+            %% Overflow -> Error
+            fields => #{<<"val_int8">> => 1000},
+            tags => #{<<"val_pk">> => 1},
+            timestamp => Ts
+        }
+    ],
+    %% NIF should return error tuple {error, {nif_error, Reason}}
+    ?assertMatch({error, {nif_error, _}}, greptimedb_rs:insert(Client, Table, Rows1)),
+
+    %% Case 2: Type Conflict INT8 ("bad" string) -> Should Error
+    Rows2 = [
+        #{
+            %% Type mismatch -> Error
+            fields => #{<<"val_int8">> => <<"bad">>},
+            tags => #{<<"val_pk">> => 2},
+            timestamp => Ts + 1000
+        }
+    ],
+    ?assertMatch({error, {nif_error, _}}, greptimedb_rs:insert(Client, Table, Rows2)),
+
+    timer:sleep(1000),
+
+    %% Case 3: PK Conflict (Insert String for Int32 PK) -> Should Error
+    RowsPK = [
+        #{
+            fields => #{<<"val_int8">> => 10},
+            tags => #{<<"val_pk">> => <<"bad_pk">>},
+            timestamp => Ts + 2000
+        }
+    ],
+    ?assertMatch({error, {nif_error, _}}, greptimedb_rs:insert(Client, Table, RowsPK)),
+
+    %% Verify no rows inserted
+    Sql = iolist_to_binary(io_lib:format("SELECT count(*) FROM ~s", [Table])),
+    {ok, [[Count]]} = greptimedb_rs:query(Client, Sql),
+    ?assertEqual(0, Count),
+
+    ok = greptimedb_rs:stop_client(Client).
+
 t_insert_async(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
@@ -318,12 +384,12 @@ t_insert_async_existing_table(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
-    % Create table explicitly with schema that differs from default inference
-    % e.g. use INT32 for pressure
+    %% Create table explicitly with schema that differs from default inference
+    %% e.g. use INT32 for pressure
     CreateTableSql = iolist_to_binary(
         io_lib:format(
             "CREATE TABLE ~s ("
@@ -377,11 +443,100 @@ t_insert_async_existing_table(Config) ->
 
     ok = greptimedb_rs:stop_client(Client).
 
+t_insert_async_schema_conflict(Config) ->
+    {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
+    Table = ?table(Config),
+
+    %% Drop table if exists
+    DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+    greptimedb_rs:query(Client, DropTableSql),
+
+    %% Create table explicitly with INT32 PK
+    CreateTableSql = iolist_to_binary(
+        io_lib:format(
+            "CREATE TABLE ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "val_int8 INT8, "
+            "val_pk INT32, "
+            "PRIMARY KEY (val_pk)"
+            ") ENGINE=mito",
+            [Table]
+        )
+    ),
+    ?assertMatch({ok, _}, greptimedb_rs:query(Client, CreateTableSql)),
+
+    Ts = erlang:system_time(millisecond),
+    Rows1 = [
+        #{
+            %% Overflow -> Error
+            fields => #{<<"val_int8">> => 1000},
+            tags => #{<<"val_pk">> => 1},
+            timestamp => Ts
+        }
+    ],
+    Self = self(),
+    Ref = make_ref(),
+    CallbackFun = fun(P, R, Res) -> P ! {R, Res} end,
+    Callback = {CallbackFun, [Self, Ref]},
+
+    {ok, _} = greptimedb_rs:insert_async(Client, Table, Rows1, Callback),
+    receive
+        {Ref, {error, {nif_error, _}}} -> ok;
+        {Ref, Result1} -> ct:fail({expected_error, got, Result1})
+    after 5000 ->
+        ct:fail(async_write_timeout)
+    end,
+
+    timer:sleep(1000),
+
+    Rows2 = [
+        #{
+            %% Type mismatch -> Error
+            fields => #{<<"val_int8">> => <<"bad">>},
+            tags => #{<<"val_pk">> => 2},
+            timestamp => Ts + 1000
+        }
+    ],
+
+    {ok, _} = greptimedb_rs:insert_async(Client, Table, Rows2, Callback),
+    receive
+        {Ref, {error, {nif_error, _}}} -> ok;
+        {Ref, Result2} -> ct:fail({expected_error, got, Result2})
+    after 5000 ->
+        ct:fail(async_write_timeout)
+    end,
+
+    timer:sleep(1000),
+
+    %% Case 3: PK Conflict Async
+    RowsPK = [
+        #{
+            fields => #{<<"val_int8">> => 10},
+            tags => #{<<"val_pk">> => <<"bad_pk">>},
+            timestamp => Ts + 2000
+        }
+    ],
+    {ok, _} = greptimedb_rs:insert_async(Client, Table, RowsPK, Callback),
+    receive
+        {Ref, {error, {nif_error, _}}} -> ok;
+        {Ref, ResultPK} -> ct:fail({expected_error, got, ResultPK})
+    after 5000 ->
+        ct:fail(async_write_timeout)
+    end,
+
+    timer:sleep(1000),
+
+    %% Verify no rows
+    Sql = iolist_to_binary(io_lib:format("SELECT count(*) FROM ~s", [Table])),
+    {ok, [[Count]]} = greptimedb_rs:query(Client, Sql),
+    ?assertEqual(0, Count),
+    ok = greptimedb_rs:stop_client(Client).
+
 t_query_sync(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
@@ -412,7 +567,7 @@ t_query_async(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
@@ -458,11 +613,11 @@ t_stream_write(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
-    % Create table explicitly
+    %% Create table explicitly
     CreateTableSql = iolist_to_binary(
         io_lib:format(
             "CREATE TABLE IF NOT EXISTS ~s ("
@@ -507,7 +662,7 @@ t_stream_write(Config) ->
 
     Sql = iolist_to_binary(io_lib:format("SELECT count(*) FROM ~s", [Table])),
     {ok, [[Count]]} = greptimedb_rs:query(Client, Sql),
-    % Verify result contains "10" (row count)
+    %% Verify result contains "10" (row count)
     ?assertEqual(10, Count),
 
     ok = greptimedb_rs:stop_client(Client).
@@ -516,11 +671,11 @@ t_stream_write_async(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    % Drop table if exists
+    %% Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
 
-    % Create table explicitly
+    %% Create table explicitly
     CreateTableSql = iolist_to_binary(
         io_lib:format(
             "CREATE TABLE IF NOT EXISTS ~s ("
@@ -582,6 +737,7 @@ t_stream_write_async(Config) ->
     ?assertEqual(10, Count),
 
     ok = greptimedb_rs:stop_client(Client).
+
 %% ================================================================================
 %% Helpers
 %% ================================================================================

@@ -12,45 +12,68 @@ use greptimedb_ingester::api::v1::{ColumnDataType, Value as ProtoValue};
 use greptimedb_ingester::Value;
 use rustler::{Encoder, Env, Term};
 
-macro_rules! match_term_to_value {
-    ($val:expr, $dtype:expr, [ $( ($variant:ident, $rust_type:ty) ),* ]) => {
-        match $dtype {
-            $(
-                ColumnDataType::$variant => {
-                    if let Ok(v) = $val.decode::<$rust_type>() {
-                        Ok(Value::$variant(v))
-                    } else {
-                        Ok(Value::Null)
-                    }
-                }
-            )*
-            _ => Ok(Value::Null),
+macro_rules! convert_int {
+    ($val:expr, $variant:ident, $intermediate:ty, $target:ty) => {
+        match $val.decode::<Option<$intermediate>>() {
+            Ok(Some(v)) => match <$target>::try_from(v) {
+                Ok(casted) => Ok(Value::$variant(casted)),
+                Err(_) => Err(rustler::Error::RaiseTerm(Box::new(format!(
+                    "Value {} out of range for type {}",
+                    v,
+                    stringify!($variant)
+                )))),
+            },
+            Ok(None) => Ok(Value::Null),
+            Err(_) => Err(rustler::Error::RaiseTerm(Box::new(format!(
+                "Invalid value for type {}: expected integer",
+                stringify!($variant)
+            )))),
+        }
+    };
+}
+
+macro_rules! convert_direct {
+    ($val:expr, $variant:ident, $type:ty) => {
+        match $val.decode::<Option<$type>>() {
+            Ok(Some(v)) => Ok(Value::$variant(v)),
+            Ok(None) => Ok(Value::Null),
+            Err(_) => Err(rustler::Error::RaiseTerm(Box::new(format!(
+                "Invalid value for type {}",
+                stringify!($variant)
+            )))),
         }
     };
 }
 
 pub fn term_to_value(val: &Term, dtype: ColumnDataType) -> rustler::NifResult<Value> {
-    match_term_to_value!(val, dtype, [
-        (Boolean, bool),
-        (Int8, i8),
-        (Int16, i16),
-        (Int32, i32),
-        (Int64, i64),
-        (Uint8, u8),
-        (Uint16, u16),
-        (Uint32, u32),
-        (Uint64, u64),
-        (Float32, f32),
-        (Float64, f64),
-        (String, String),
-        (Binary, Vec<u8>),
-        (Date, i32),
-        (Datetime, i64),
-        (TimestampSecond, i64),
-        (TimestampMillisecond, i64),
-        (TimestampMicrosecond, i64),
-        (TimestampNanosecond, i64)
-    ])
+    match dtype {
+        ColumnDataType::Boolean => convert_direct!(val, Boolean, bool),
+        ColumnDataType::Int8 => convert_int!(val, Int8, i64, i8),
+        ColumnDataType::Int16 => convert_int!(val, Int16, i64, i16),
+        ColumnDataType::Int32 => convert_int!(val, Int32, i64, i32),
+        ColumnDataType::Int64 => convert_int!(val, Int64, i64, i64),
+        ColumnDataType::Uint8 => convert_int!(val, Uint8, u64, u8),
+        ColumnDataType::Uint16 => convert_int!(val, Uint16, u64, u16),
+        ColumnDataType::Uint32 => convert_int!(val, Uint32, u64, u32),
+        ColumnDataType::Uint64 => convert_int!(val, Uint64, u64, u64),
+        ColumnDataType::Float32 => convert_direct!(val, Float32, f32),
+        ColumnDataType::Float64 => convert_direct!(val, Float64, f64),
+        ColumnDataType::String => convert_direct!(val, String, String),
+        ColumnDataType::Binary => {
+            if let Ok(bin) = val.decode::<rustler::Binary>() {
+                Ok(Value::Binary(bin.as_slice().to_vec()))
+            } else {
+                convert_direct!(val, Binary, Vec<u8>)
+            }
+        }
+        ColumnDataType::Date => convert_int!(val, Date, i32, i32),
+        ColumnDataType::Datetime => convert_int!(val, Datetime, i64, i64),
+        ColumnDataType::TimestampSecond => convert_int!(val, TimestampSecond, i64, i64),
+        ColumnDataType::TimestampMillisecond => convert_int!(val, TimestampMillisecond, i64, i64),
+        ColumnDataType::TimestampMicrosecond => convert_int!(val, TimestampMicrosecond, i64, i64),
+        ColumnDataType::TimestampNanosecond => convert_int!(val, TimestampNanosecond, i64, i64),
+        _ => Ok(Value::Null),
+    }
 }
 
 pub fn value_to_proto_value(value: Value) -> ProtoValue {
