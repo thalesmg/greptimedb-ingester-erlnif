@@ -62,6 +62,8 @@ t_insert_all_types(Config) ->
 
     %% insert api use schema auto-create feature
     %% no need to setup table explicitly
+    %% but we need to drop table first to ensure clean state
+    drop_table_if_exists(Client, Table),
     Rows = [generate_full_row(1)],
 
     ?assertMatch({ok, _}, greptimedb_rs:insert(Client, Table, Rows)),
@@ -76,6 +78,8 @@ t_insert_async_all_types(Config) ->
 
     %% insert api use schema auto-create feature
     %% no need to setup table explicitly
+    %% but we need to drop table first to ensure clean state
+    drop_table_if_exists(Client, Table),
     Rows = [generate_full_row(2)],
 
     Self = self(),
@@ -141,8 +145,7 @@ t_stream_async_all_types(Config) ->
 %% Helpers
 
 setup_table(Client, Table) ->
-    DropSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
-    greptimedb_rs:query(Client, DropSql),
+    drop_table_if_exists(Client, Table),
 
     CreateSql = iolist_to_binary(
         io_lib:format(
@@ -170,6 +173,10 @@ setup_table(Client, Table) ->
         )
     ),
     {ok, _} = greptimedb_rs:query(Client, CreateSql).
+
+drop_table_if_exists(Client, Table) ->
+    DropSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+    greptimedb_rs:query(Client, DropSql).
 
 generate_full_row(Id) ->
     Ts = os:system_time(millisecond),
