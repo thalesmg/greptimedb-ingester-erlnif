@@ -126,27 +126,44 @@ fn array_value_to_term<'a>(env: Env<'a>, array: &ArrayRef, index: usize) -> Term
     if array.is_null(index) {
         return rustler::types::atom::nil().to_term(env);
     }
-    match_array_value!(array, index, env, [
-        (DataType::Boolean, BooleanArray),
-        (DataType::Int8, Int8Array),
-        (DataType::Int16, Int16Array),
-        (DataType::Int32, Int32Array),
-        (DataType::Int64, Int64Array),
-        (DataType::UInt8, UInt8Array),
-        (DataType::UInt16, UInt16Array),
-        (DataType::UInt32, UInt32Array),
-        (DataType::UInt64, UInt64Array),
-        (DataType::Float32, Float32Array),
-        (DataType::Float64, Float64Array),
-        (DataType::Utf8, StringArray),
-        (DataType::LargeUtf8, LargeStringArray),
-        (DataType::Binary, BinaryArray),
-        (DataType::LargeBinary, LargeBinaryArray),
-        (DataType::Date32, Date32Array),
-        (DataType::Date64, Date64Array),
-        (DataType::Timestamp(TimeUnit::Second, _), TimestampSecondArray),
-        (DataType::Timestamp(TimeUnit::Millisecond, _), TimestampMillisecondArray),
-        (DataType::Timestamp(TimeUnit::Microsecond, _), TimestampMicrosecondArray),
-        (DataType::Timestamp(TimeUnit::Nanosecond, _), TimestampNanosecondArray)
-    ])
+    match_array_value!(
+        array,
+        index,
+        env,
+        [
+            (DataType::Boolean, BooleanArray),
+            (DataType::Int8, Int8Array),
+            (DataType::Int16, Int16Array),
+            (DataType::Int32, Int32Array),
+            (DataType::Int64, Int64Array),
+            (DataType::UInt8, UInt8Array),
+            (DataType::UInt16, UInt16Array),
+            (DataType::UInt32, UInt32Array),
+            (DataType::UInt64, UInt64Array),
+            (DataType::Float32, Float32Array),
+            (DataType::Float64, Float64Array),
+            (DataType::Utf8, StringArray),
+            (DataType::LargeUtf8, LargeStringArray),
+            (DataType::Binary, BinaryArray),
+            (DataType::LargeBinary, LargeBinaryArray),
+            (DataType::Date32, Date32Array),
+            (DataType::Date64, Date64Array),
+            (
+                DataType::Timestamp(TimeUnit::Second, _),
+                TimestampSecondArray
+            ),
+            (
+                DataType::Timestamp(TimeUnit::Millisecond, _),
+                TimestampMillisecondArray
+            ),
+            (
+                DataType::Timestamp(TimeUnit::Microsecond, _),
+                TimestampMicrosecondArray
+            ),
+            (
+                DataType::Timestamp(TimeUnit::Nanosecond, _),
+                TimestampNanosecondArray
+            )
+        ]
+    )
 }

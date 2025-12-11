@@ -5,8 +5,8 @@ use greptimedb_ingester::database::Database;
 use greptimedb_ingester::{
     BulkInserter, BulkStreamWriter, BulkWriteOptions, ColumnDataType, CompressionType, TableSchema,
 };
-use lazy_static::lazy_static;
 use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
@@ -14,9 +14,7 @@ pub mod atoms;
 mod types;
 mod util;
 
-lazy_static! {
-    static ref RUNTIME: Runtime = Runtime::new().unwrap();
-}
+static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 pub struct GreptimeResource {
     pub db: Database,
@@ -42,6 +40,24 @@ fn load(env: Env, _info: Term) -> bool {
 }
 
 use greptimedb_ingester::channel_manager::ClientTlsOption;
+
+fn get_runtime<'a>(_env: Env<'a>) -> NifResult<&'static Runtime> {
+    RUNTIME
+        .get()
+        .ok_or(rustler::Error::Atom("runtime_not_initialized"))
+}
+
+#[rustler::nif]
+fn init_runtime(env: Env) -> NifResult<bool> {
+    let _ = env;
+    if RUNTIME.get().is_some() {
+        return Ok(false); // Already initialized
+    }
+
+    let rt = Runtime::new().map_err(|e| rustler::Error::Term(Box::new(e.to_string())))?;
+    let _ = RUNTIME.set(rt);
+    Ok(true)
+}
 
 #[rustler::nif(schedule = "DirtyIo")]
 fn connect(opts: Term) -> NifResult<Term> {
@@ -105,9 +121,10 @@ fn connect(opts: Term) -> NifResult<Term> {
 #[rustler::nif(schedule = "DirtyIo")]
 fn execute(env: Env, resource: ResourceArc<GreptimeResource>, sql: String) -> NifResult<Term> {
     let db = &resource.db;
+    let runtime = get_runtime(env)?;
 
     // Collect RecordBatches first (Env is not Send)
-    let result = RUNTIME.block_on(async {
+    let result = runtime.block_on(async {
         use futures::StreamExt;
         match db.query(&sql).await {
             Ok(mut stream) => {
@@ -224,11 +241,13 @@ fn insert<'a>(
         return Ok((atoms::ok(), 0).encode(env));
     }
 
+    let runtime = get_runtime(env)?;
+
     use greptimedb_ingester::api::v1::{RowInsertRequest, RowInsertRequests, Rows};
 
     // 1. Try Fetch Schema from Server
     let table_schema_res: Result<TableSchema, String> =
-        RUNTIME.block_on(fetch_table_schema(&resource.db, &table));
+        runtime.block_on(fetch_table_schema(&resource.db, &table));
 
     let (schema, rows) = match table_schema_res {
         Ok(s) => {
@@ -264,7 +283,7 @@ fn insert<'a>(
     };
 
     // 3. Insert using Database
-    let result: Result<u32, String> = RUNTIME.block_on(async {
+    let result: Result<u32, String> = runtime.block_on(async {
         resource
             .db
             .insert(insert_request)
@@ -285,9 +304,11 @@ fn stream_start<'a>(
     table: String,
     _first_row: Term<'a>,
 ) -> NifResult<Term<'a>> {
+    let runtime = get_runtime(env)?;
+
     // 1. Fetch Schema from Server
     let table_template_res: Result<TableSchema, String> =
-        RUNTIME.block_on(fetch_table_schema(&resource.db, &table));
+        runtime.block_on(fetch_table_schema(&resource.db, &table));
     let table_template = match table_template_res {
         Ok(s) => s,
         Err(e) => return Ok((atoms::error(), e).encode(env)),
@@ -295,7 +316,7 @@ fn stream_start<'a>(
 
     let schema_clone = table_template.clone();
 
-    let result: Result<ResourceArc<StreamWriterResource>, String> = RUNTIME.block_on(async {
+    let result: Result<ResourceArc<StreamWriterResource>, String> = runtime.block_on(async {
         let mut bulk_inserter = BulkInserter::new(resource.client.clone(), resource.db.dbname());
         if let Some(auth) = &resource.auth {
             bulk_inserter.set_auth(auth.clone());
@@ -331,9 +352,10 @@ fn stream_write<'a>(
     resource: ResourceArc<StreamWriterResource>,
     rows_term: Vec<Term<'a>>,
 ) -> NifResult<Term<'a>> {
+    let runtime = get_runtime(env)?;
     let greptime_rows = util::terms_to_rows(&resource.schema, rows_term)?;
 
-    let result: Result<(), String> = RUNTIME.block_on(async {
+    let result: Result<(), String> = runtime.block_on(async {
         let mut writer_guard = resource.writer.lock().await;
         if let Some(writer_wrapper) = writer_guard.as_mut() {
             let writer = &mut writer_wrapper.0;
@@ -355,7 +377,8 @@ fn stream_write<'a>(
 
 #[rustler::nif(schedule = "DirtyIo")]
 fn stream_close(env: Env, resource: ResourceArc<StreamWriterResource>) -> NifResult<Term> {
-    let result: Result<(), String> = RUNTIME.block_on(async {
+    let runtime = get_runtime(env)?;
+    let result: Result<(), String> = runtime.block_on(async {
         let mut writer_guard = resource.writer.lock().await;
         if let Some(writer_wrapper) = writer_guard.take() {
             let writer = writer_wrapper.0;
