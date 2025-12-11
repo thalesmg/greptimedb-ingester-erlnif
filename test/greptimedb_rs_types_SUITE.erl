@@ -60,8 +60,8 @@ t_insert_all_types(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    setup_table(Client, Table),
-
+    %% insert api use schema auto-create feature
+    %% no need to setup table explicitly
     Rows = [generate_full_row(1)],
 
     ?assertMatch({ok, _}, greptimedb_rs:insert(Client, Table, Rows)),
@@ -74,8 +74,8 @@ t_insert_async_all_types(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
 
-    setup_table(Client, Table),
-
+    %% insert api use schema auto-create feature
+    %% no need to setup table explicitly
     Rows = [generate_full_row(2)],
 
     Self = self(),

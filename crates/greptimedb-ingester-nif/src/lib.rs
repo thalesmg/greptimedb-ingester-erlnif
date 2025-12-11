@@ -216,42 +216,25 @@ fn insert<'a>(
         return Ok((atoms::ok(), 0).encode(env));
     }
 
-    // 1. Fetch Schema from Server
-    let table_template_res: Result<TableSchema, String> =
-        RUNTIME.block_on(fetch_table_schema(&resource.db, &table));
-    let table_template = match table_template_res {
-        Ok(s) => s,
-        Err(e) => return Ok((atoms::error(), e).encode(env)),
+    // 1. Infer Schema and Construct Rows (Schema-less)
+    let (schema, rows) = util::terms_to_schema_and_rows(rows_term)?;
+
+    // 2. Construct Request
+    use greptimedb_ingester::api::v1::{RowInsertRequest, RowInsertRequests, Rows};
+    let insert_request = RowInsertRequests {
+        inserts: vec![RowInsertRequest {
+            table_name: table,
+            rows: Some(Rows { schema, rows }),
+        }],
     };
 
-    // 2. Construct Rows
-    let greptime_rows = util::terms_to_rows(&table_template, rows_term)?;
-
+    // 3. Insert using Database (low latency API)
     let result: Result<u32, String> = RUNTIME.block_on(async {
-        let mut bulk_inserter = BulkInserter::new(resource.client.clone(), resource.db.dbname());
-        if let Some(auth) = &resource.auth {
-            bulk_inserter.set_auth(auth.clone());
-        }
-
-        let mut writer = bulk_inserter
-            .create_bulk_stream_writer(
-                &table_template,
-                Some(
-                    BulkWriteOptions::default()
-                        .with_compression(CompressionType::Zstd)
-                        .with_timeout(Duration::from_secs(30)),
-                ),
-            )
+        resource
+            .db
+            .insert(insert_request)
             .await
-            .map_err(|e| e.to_string())?;
-
-        let response = writer
-            .write_rows(greptime_rows)
-            .await
-            .map_err(|e| e.to_string())?;
-        writer.finish().await.map_err(|e| e.to_string())?;
-
-        Ok(response.affected_rows() as u32)
+            .map_err(|e| e.to_string())
     });
 
     match result {
