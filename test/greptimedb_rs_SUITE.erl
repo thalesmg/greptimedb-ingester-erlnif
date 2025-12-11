@@ -20,8 +20,10 @@ groups() ->
     TCs = [
         t_connect,
         t_insert_sync,
+        t_insert_sync_existing_table,
         t_query_sync,
         t_insert_async,
+        t_insert_async_existing_table,
         t_query_async,
         t_stream_write,
         t_stream_write_async
@@ -79,11 +81,28 @@ init_per_testcase(TestCase, Config) ->
     Table = <<(atom_to_binary(TestCase))/binary, "_table_", UniqueSuffix/binary>>,
     [{database, Database}, {table, Table} | Config].
 
-end_per_testcase(_TestCase, _Config) ->
-    %% Ensure client is stopped to prevent 'already_started' in next test
-    ConnOpts = #{pool_name => greptimedb_rs_pool},
-    catch greptimedb_rs:stop_client(ConnOpts),
-    ok.
+end_per_testcase(_TestCase, Config) ->
+    case ?config(conn_opts, Config) of
+        undefined ->
+            ok;
+        ConnOpts ->
+            Table = ?table(Config),
+
+            %% Ensure client is available to clean up
+            Client =
+                case greptimedb_rs:start_client(ConnOpts) of
+                    {ok, C} -> C;
+                    {error, {already_started, C}} -> C
+                end,
+
+            %% Drop the table
+            DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+            greptimedb_rs:query(Client, DropTableSql),
+
+            %% Ensure client is stopped to prevent 'already_started' in next test
+            catch greptimedb_rs:stop_client(Client),
+            ok
+    end.
 
 %% ----------------------------------------
 %% Test Cases
@@ -135,6 +154,54 @@ t_insert_sync(Config) ->
     ?assertMatch({ok, _}, greptimedb_rs:insert(Client, Table, Rows)),
     ok = greptimedb_rs:stop_client(Client).
 
+t_insert_sync_existing_table(Config) ->
+    {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
+    Table = ?table(Config),
+
+    % Drop table if exists
+    DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+    greptimedb_rs:query(Client, DropTableSql),
+
+    % Create table explicitly with schema that differs from default inference
+    % e.g. use INT32 for pressure (default inference might prefer INT64)
+    CreateTableSql = iolist_to_binary(
+        io_lib:format(
+            "CREATE TABLE ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "temperature DOUBLE, "
+            "pressure INT32, "
+            "active BOOLEAN, "
+            "sensor_location STRING, "
+            "sensor_id INT64, "
+            "insert_val DOUBLE, "
+            "PRIMARY KEY (sensor_location, sensor_id)"
+            ") ENGINE=mito",
+            [Table]
+        )
+    ),
+    ?assertMatch({ok, _}, greptimedb_rs:query(Client, CreateTableSql)),
+
+    Ts = erlang:system_time(millisecond),
+    Rows = [
+        #{
+            fields => #{
+                <<"temperature">> => 25.5,
+                % Fits in INT32
+                <<"pressure">> => 1013,
+                <<"active">> => true,
+                <<"insert_val">> => 1.0
+            },
+            tags => #{
+                <<"sensor_location">> => <<"room1">>,
+                <<"sensor_id">> => 12345
+            },
+            timestamp => Ts
+        }
+    ],
+    % Should succeed by using the existing schema
+    ?assertMatch({ok, _}, greptimedb_rs:insert(Client, Table, Rows)),
+    ok = greptimedb_rs:stop_client(Client).
+
 t_insert_async(Config) ->
     {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
     Table = ?table(Config),
@@ -142,6 +209,68 @@ t_insert_async(Config) ->
     % Drop table if exists
     DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
     greptimedb_rs:query(Client, DropTableSql),
+
+    Ts = erlang:system_time(millisecond),
+    Rows = [
+        #{
+            fields => #{
+                <<"temperature">> => 25.5,
+                <<"pressure">> => 1013,
+                <<"active">> => true,
+                <<"async_insert">> => 100
+            },
+            tags => #{
+                <<"sensor_location">> => <<"room1">>,
+                <<"sensor_id">> => 12345
+            },
+            timestamp => Ts
+        }
+    ],
+    Self = self(),
+    Ref = make_ref(),
+    CallbackFun = fun(P, R, Res) -> P ! {R, Res} end,
+    Callback = {CallbackFun, [Self, Ref]},
+
+    {ok, _WorkerPid} = greptimedb_rs:insert_async(Client, Table, Rows, Callback),
+    receive
+        {Ref, {ok, _}} -> ok;
+        {Ref, {error, Reason}} -> ct:fail({async_write_failed, Reason})
+    after 5000 ->
+        ct:fail(async_write_timeout)
+    end,
+
+    timer:sleep(1000),
+    Sql = iolist_to_binary(io_lib:format("SELECT count(*) FROM ~s", [Table])),
+    ?assertMatch({ok, [_ | _]}, greptimedb_rs:query(Client, Sql)),
+
+    ok = greptimedb_rs:stop_client(Client).
+
+t_insert_async_existing_table(Config) ->
+    {ok, Client} = greptimedb_rs:start_client(?conn_opts(Config)),
+    Table = ?table(Config),
+
+    % Drop table if exists
+    DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+    greptimedb_rs:query(Client, DropTableSql),
+
+    % Create table explicitly with schema that differs from default inference
+    % e.g. use INT32 for pressure
+    CreateTableSql = iolist_to_binary(
+        io_lib:format(
+            "CREATE TABLE ~s ("
+            "ts TIMESTAMP TIME INDEX, "
+            "temperature DOUBLE, "
+            "pressure INT32, "
+            "active BOOLEAN, "
+            "sensor_location STRING, "
+            "sensor_id INT64, "
+            "async_insert INT64, "
+            "PRIMARY KEY (sensor_location, sensor_id)"
+            ") ENGINE=mito",
+            [Table]
+        )
+    ),
+    ?assertMatch({ok, _}, greptimedb_rs:query(Client, CreateTableSql)),
 
     Ts = erlang:system_time(millisecond),
     Rows = [

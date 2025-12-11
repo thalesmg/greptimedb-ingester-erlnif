@@ -48,9 +48,20 @@ init_per_testcase(TestCase, Config) ->
     Table = <<(atom_to_binary(TestCase))/binary, "_table_", UniqueSuffix/binary>>,
     [{table, Table} | Config].
 
-end_per_testcase(_TestCase, _Config) ->
-    ConnOpts = #{pool_name => greptimedb_rs_pool},
-    catch greptimedb_rs:stop_client(ConnOpts),
+end_per_testcase(_TestCase, Config) ->
+    ConnOpts = ?conn_opts(Config),
+    Table = ?table(Config),
+
+    Client =
+        case greptimedb_rs:start_client(ConnOpts) of
+            {ok, C} -> C;
+            {error, {already_started, C}} -> C
+        end,
+
+    DropTableSql = iolist_to_binary(io_lib:format("DROP TABLE IF EXISTS ~s", [Table])),
+    greptimedb_rs:query(Client, DropTableSql),
+
+    catch greptimedb_rs:stop_client(Client),
     ok.
 
 %% ----------------------------------------
