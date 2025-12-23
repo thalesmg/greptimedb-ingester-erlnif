@@ -4,7 +4,7 @@
 
 -define(CNT, 1000).
 -define(BATCH_COUNT, ?CNT).
--define(ROWS_PER_BATCH, ?CNT).
+-define(ROWS_PER_BATCH, ?CNT * 5).
 -define(DB_NAME, <<"public">>).
 
 main() ->
