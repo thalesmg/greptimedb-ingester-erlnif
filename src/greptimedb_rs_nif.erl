@@ -1,8 +1,24 @@
+%%--------------------------------------------------------------------
+%% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
+%%--------------------------------------------------------------------
+
 -module(greptimedb_rs_nif).
 
 -export([
-    init_runtime/0,
     connect/1,
+    disconnect/1,
     execute/2,
     insert/3,
     stream_start/3,
@@ -16,26 +32,15 @@
 init() ->
     NifName = "libgreptimedb_nif",
     Niflib = filename:join(priv_dir(), NifName),
-    case erlang:load_nif(Niflib, none) of
-        ok ->
-            %% Initialize the Rust runtime immediately after loading
-            case init_runtime() of
-                true -> ok;
-                %% already initialized
-                false -> ok;
-                Error -> Error
-            end;
-        {error, _Reason} = Res ->
-            Res
-    end.
+    erlang:load_nif(Niflib, none).
 
 %% =================================================================================================
 %% NIFs
 
-init_runtime() ->
+connect(_Opts) ->
     not_loaded(?LINE).
 
-connect(_Opts) ->
+disconnect(_Client) ->
     not_loaded(?LINE).
 
 execute(_Client, _Sql) ->

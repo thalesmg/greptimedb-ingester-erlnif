@@ -1,3 +1,19 @@
+%%--------------------------------------------------------------------
+%% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
+%%--------------------------------------------------------------------
+
 -module(greptimedb_rs_sock).
 
 -include("greptimedb_rs.hrl").
@@ -151,7 +167,8 @@ handle_info(?ASYNC_REQ(Func, Args, {CallbackFun, CallBackArgs}), State = ?client
 handle_info(_, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{writers = Writers}) ->
+terminate(_Reason, #state{client = ClientRef, writers = Writers}) ->
+    %% Close all stream writers first
     maps:fold(
         fun(_Table, WriterRef, _) ->
             apply_nif(?cmd_stream_close, [WriterRef])
@@ -159,6 +176,11 @@ terminate(_Reason, #state{writers = Writers}) ->
         ok,
         Writers
     ),
+    %% Disconnect the client to explicitly release resources
+    case ClientRef of
+        undefined -> ok;
+        _ -> apply_nif(?cmd_disconnect, [ClientRef])
+    end,
     ok;
 terminate(_Reason, _Pid) ->
     ok.
