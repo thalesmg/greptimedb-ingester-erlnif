@@ -115,7 +115,7 @@ jobs:
           path: packages
           merge-multiple: true
       - name: Create Release
-        uses: softprops/action-gh-release@69320dbe05506a9a39fc8ae11030b214ec2d1f87 # v2.0.5
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           name: ${{ env.package_pretty_name }} ${{ github.event.inputs.release_as || github.ref_name }} Released
           tag_name: ${{ github.event.inputs.release_as || github.ref_name }}
